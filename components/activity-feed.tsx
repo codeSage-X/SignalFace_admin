@@ -4,13 +4,12 @@ import React from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import type { ActivityItem } from '@/lib/api'
 
-export interface ActivityItem {
-  actor: string
-  action: string
-  detail: string
-  timestamp: string
-}
+// Re-exported rather than redeclared: this file used to carry its own copy of
+// the shape, so fields added to the API type (the avatar, for one) never
+// reached the component and silently went missing.
+export type { ActivityItem }
 
 function initials(name: string) {
   return name
@@ -46,7 +45,12 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             {items.map((activity, i) => (
               <div key={i} className="flex items-start gap-4">
                 <Avatar className="size-10">
-                  <AvatarImage src={`https://avatar.vercel.sh/${activity.actor}`} />
+                  {/* The real avatar. Rendered only when there is one, so the
+                      fallback initials show instead of a broken image — this used
+                      to point at a generated placeholder for everybody. */}
+                  {activity.actorAvatarUrl && (
+                    <AvatarImage src={activity.actorAvatarUrl} alt={activity.actor} />
+                  )}
                   <AvatarFallback>{initials(activity.actor)}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1">

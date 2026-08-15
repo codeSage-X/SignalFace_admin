@@ -23,6 +23,7 @@ import {
   Settings,
   BarChart3,
   Globe,
+  Gift,
   Share2,
   LogOut,
 } from 'lucide-react'
@@ -84,6 +85,12 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       icon: BarChart3,
       href: '/admin/scoring',
       id: 'scoring',
+    },
+    {
+      title: 'Rewards & Referrals',
+      icon: Gift,
+      href: '/admin/rewards',
+      id: 'rewards',
     },
     {
       title: 'Realms & Referrals',

@@ -92,6 +92,9 @@ export interface WeeklyVolumePoint {
 
 export interface ActivityItem {
   actor: string;
+  actorUsername: string;
+  /** Null when the account has never uploaded one — fall back to initials. */
+  actorAvatarUrl: string | null;
   action: string;
   detail: string;
   timestamp: string;
@@ -107,15 +110,32 @@ export interface OverviewData {
   recentActivity: ActivityItem[];
 }
 
+export type AccountStatus = 'ACTIVE' | 'RESTRICTED' | 'BLOCKED';
+
 export interface AdminUserRow {
   id: string;
   name: string;
+  username: string;
   email: string;
-  status: 'active' | 'unverified' | 'suspended';
+  avatarUrl: string | null;
+  /** Display state: moderation takes precedence over email verification. */
+  status: 'active' | 'unverified' | 'restricted' | 'blocked';
+  accountStatus: AccountStatus;
+  statusReason: string | null;
+  role: string;
   joinDate: string;
   tier: string;
   trades: number;
   balance: string;
+}
+
+/** One page of the admin user list. */
+export interface AdminUsersPage {
+  items: AdminUserRow[];
+  total: number;
+  page: number;
+  limit: number;
+  pageCount: number;
 }
 
 export interface AdminSignalRow {
@@ -132,14 +152,76 @@ export interface AdminSignalRow {
   createdAt: string;
 }
 
+export type RewardType = 'SIGNUP_BONUS' | 'REFERRAL_BONUS' | 'ONE_TIME' | 'RECURRING';
+
+export interface AdminReward {
+  id: string;
+  name: string;
+  description: string | null;
+  type: RewardType;
+  amount: string;
+  active: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  cooldownHours: number | null;
+  maxClaims: number | null;
+  maxPerUser: number | null;
+  totalClaims: number;
+  totalPaid: string;
+  createdAt: string;
+}
+
+/** Everything the admin form can set. Omitted fields are left unchanged. */
+export interface RewardInput {
+  name?: string;
+  description?: string | null;
+  type?: RewardType;
+  amount?: number;
+  active?: boolean;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  cooldownHours?: number | null;
+  maxClaims?: number | null;
+  maxPerUser?: number | null;
+}
+
 export const adminApi = {
+  getRewards: () => request<{ items: AdminReward[] }>('/admin/rewards'),
+  createReward: (body: RewardInput) =>
+    request<AdminReward>('/admin/rewards', { method: 'POST', body: JSON.stringify(body) }),
+  updateReward: (id: string, body: RewardInput) =>
+    request<AdminReward>(`/admin/rewards/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteReward: (id: string) =>
+    request<{ id: string; deleted: boolean; deactivated: boolean }>(`/admin/rewards/${id}`, {
+      method: 'DELETE',
+    }),
   invite: (body: { email: string; displayName: string }) =>
     request<MessageResponse>('/admin/invite', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
   getOverview: () => request<OverviewData>('/admin/overview'),
-  getUsers: () => request<AdminUserRow[]>('/admin/users'),
+  getUsers: (params: { q?: string; page?: number; limit?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.q?.trim()) search.set('q', params.q.trim());
+    if (params.page) search.set('page', String(params.page));
+    if (params.limit) search.set('limit', String(params.limit));
+    const qs = search.toString();
+    return request<AdminUsersPage>(`/admin/users${qs ? `?${qs}` : ''}`);
+  },
+  updateUser: (id: string, body: { displayName?: string; username?: string; email?: string }) =>
+    request<AdminUserRow>(`/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  /** Restrict (under review), block (banned) or reinstate. */
+  setUserStatus: (id: string, body: { status: AccountStatus; reason?: string }) =>
+    request<AdminUserRow>(`/admin/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteUser: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/admin/users/${id}`, { method: 'DELETE' }),
   getSignals: () => request<AdminSignalRow[]>('/admin/signals'),
   createSignal: (body: { title: string; worth: number }) =>
     request<AdminSignalRow>('/admin/signals', {

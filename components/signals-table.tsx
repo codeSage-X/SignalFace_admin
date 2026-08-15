@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import { adminApi, type AdminSignalRow } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { CreateSignalSheet } from '@/components/create-signal-sheet'
 
 type SignalType = 'bullish' | 'bearish'
@@ -120,11 +121,34 @@ export function SignalsTable() {
           </thead>
           <tbody>
             {loading ? (
-              <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
-                  Loading signals…
-                </td>
-              </tr>
+              // Placeholder rows rather than a single line of text, so the table
+              // keeps its height and columns while loading instead of collapsing
+              // and then jolting when the data lands.
+              Array.from({ length: 8 }).map((_, i) => (
+                <tr key={i} className="border-b">
+                  <td className="px-6 py-4">
+                    <Skeleton className="h-4 w-40" />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Skeleton className="h-4 w-28" />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Skeleton className="mx-auto h-4 w-16" />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Skeleton className="ml-auto h-4 w-16" />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Skeleton className="ml-auto h-4 w-20" />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Skeleton className="mx-auto h-4 w-10" />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                  </td>
+                </tr>
+              ))
             ) : filteredSignals.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
