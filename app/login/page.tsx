@@ -43,7 +43,20 @@ export default function LoginPage() {
       );
       router.push('/admin/overview');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Login failed. Please try again.');
+      // A network failure is not a rejected password, and calling it one sent us
+      // hunting for a credentials bug when the dashboard simply couldn't reach
+      // the API at all — which is what happens on a phone if NEXT_PUBLIC_API_URL
+      // still points at localhost.
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        const target = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/api';
+        console.error('[admin] could not reach the API', { target, err });
+        setError(
+          `Could not reach the server at ${target}. Check that the API is running ` +
+            'and that this address is reachable from this device.',
+        );
+      }
     }
   };
 
