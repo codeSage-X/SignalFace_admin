@@ -185,6 +185,115 @@ export interface RewardInput {
   maxPerUser?: number | null;
 }
 
+
+// ── Platform operations ──────────────────────────────────────────────────────
+
+export type RealmStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+export type PostModeration = 'VISIBLE' | 'CENSORED' | 'REMOVED';
+
+export interface AdminPerson {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AdminRealmRow {
+  id: string;
+  name: string;
+  slug: string;
+  category: string;
+  status: RealmStatus;
+  tagline: string | null;
+  iconUrl: string | null;
+  createdAt: string;
+  postsCount: number;
+  followersCount: number;
+  owner: AdminPerson;
+}
+
+export interface AdminTradeRow {
+  id: string;
+  side: 'BUY' | 'SELL';
+  quantity: string;
+  pricePerUnit: string;
+  totalPoints: string;
+  createdAt: string;
+  user: AdminPerson;
+  signalName: string;
+}
+
+export interface WalletStats {
+  circulatingPoints: string;
+  totalTrades: number;
+  totalVolume: string;
+  volume24h: string;
+  holders: number;
+}
+
+export interface AdminModerationRow {
+  id: string;
+  body: string | null;
+  mediaUrls: string[];
+  createdAt: string;
+  moderation: PostModeration;
+  moderationNote: string | null;
+  appealNote: string | null;
+  appealedAt: string | null;
+  reportCount: number;
+  reasons: string[];
+  author: AdminPerson;
+}
+
+export interface ScoringConfig {
+  wFollowers: number;
+  wLikes: number;
+  wComments: number;
+  wShares: number;
+  wGrowth: number;
+  priceBase: number;
+  priceK: number;
+  smoothing: number;
+  updatedAt: string;
+}
+
+export interface ReferralRow extends AdminPerson {
+  referralCode: string;
+  referredCount: number;
+  verifiedCount: number;
+}
+
+export interface ReferralStats {
+  items: ReferralRow[];
+  totals: { totalReferred: number; bonusesPaid: number; pointsPaid: string };
+  page: number;
+  pageSize: number;
+}
+
+export interface PlatformSettingRow {
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
+export interface AuditRow {
+  id: string;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  summary: string | null;
+  metadata: unknown;
+  createdAt: string;
+  actor: AdminPerson | null;
+}
+
 export const adminApi = {
   getRewards: () => request<{ items: AdminReward[] }>('/admin/rewards'),
   createReward: (body: RewardInput) =>
@@ -222,6 +331,72 @@ export const adminApi = {
     }),
   deleteUser: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/admin/users/${id}`, { method: 'DELETE' }),
+  // ── Creator approvals & realms ─────────────────────────────────────────────
+  getRealms: (params: { status?: string; q?: string; page?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.status) search.set('status', params.status);
+    if (params.q) search.set('q', params.q);
+    if (params.page) search.set('page', String(params.page));
+    const qs = search.toString();
+    return request<Paged<AdminRealmRow>>(`/admin/realms${qs ? `?${qs}` : ''}`);
+  },
+  setRealmStatus: (id: string, body: { status: RealmStatus; note?: string }) =>
+    request<{ id: string; status: RealmStatus }>(`/admin/realms/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  // ── Trading & wallets ──────────────────────────────────────────────────────
+  getTrades: (params: { q?: string; page?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.q) search.set('q', params.q);
+    if (params.page) search.set('page', String(params.page));
+    const qs = search.toString();
+    return request<Paged<AdminTradeRow>>(`/admin/trades${qs ? `?${qs}` : ''}`);
+  },
+  getWalletStats: () => request<WalletStats>('/admin/wallet-stats'),
+
+  // ── Content moderation ─────────────────────────────────────────────────────
+  getModeration: (params: { status?: string; page?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.status) search.set('status', params.status);
+    if (params.page) search.set('page', String(params.page));
+    const qs = search.toString();
+    return request<Paged<AdminModerationRow>>(`/admin/moderation${qs ? `?${qs}` : ''}`);
+  },
+  setPostModeration: (id: string, body: { moderation: PostModeration; note?: string }) =>
+    request<{ id: string; moderation: PostModeration }>(`/admin/posts/${id}/moderation`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  // ── Scoring ────────────────────────────────────────────────────────────────
+  getScoring: () => request<ScoringConfig>('/admin/scoring'),
+  updateScoring: (body: Partial<Omit<ScoringConfig, 'updatedAt'>>) =>
+    request<ScoringConfig>('/admin/scoring', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  // ── Referrals ──────────────────────────────────────────────────────────────
+  getReferrals: (params: { page?: number } = {}) =>
+    request<ReferralStats>(`/admin/referrals${params.page ? `?page=${params.page}` : ''}`),
+
+  // ── Settings & audit ───────────────────────────────────────────────────────
+  getSettings: () => request<{ items: PlatformSettingRow[] }>('/admin/settings'),
+  updateSetting: (body: { key: string; value: string }) =>
+    request<PlatformSettingRow>('/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  getAudit: (params: { action?: string; page?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.action) search.set('action', params.action);
+    if (params.page) search.set('page', String(params.page));
+    const qs = search.toString();
+    return request<Paged<AuditRow>>(`/admin/audit${qs ? `?${qs}` : ''}`);
+  },
+
   getSignals: () => request<AdminSignalRow[]>('/admin/signals'),
   createSignal: (body: { title: string; worth: number }) =>
     request<AdminSignalRow>('/admin/signals', {

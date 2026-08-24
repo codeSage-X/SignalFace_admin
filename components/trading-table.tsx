@@ -1,185 +1,158 @@
 'use client'
 
-import { useState } from 'react'
-import { ArrowUpRight, ArrowDownLeft, Eye, Clock } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { ArrowDownRight, ArrowUpRight, Search } from 'lucide-react'
+import { adminApi, type AdminTradeRow } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 
-interface Trade {
-  id: string
-  user: string
-  type: 'buy' | 'sell'
-  asset: string
-  amount: string
-  price: string
-  date: string
-  status: 'completed' | 'pending' | 'failed'
-}
+const DEBOUNCE_MS = 500
 
-const mockTrades: Trade[] = [
-  {
-    id: '1',
-    user: 'Alex Johnson',
-    type: 'buy',
-    asset: 'AI-500',
-    amount: '$2,500',
-    price: '$125.50',
-    date: '2024-07-12 14:32',
-    status: 'completed',
-  },
-  {
-    id: '2',
-    user: 'Jordan Smith',
-    type: 'sell',
-    asset: 'TECH',
-    amount: '$1,850',
-    price: '$92.25',
-    date: '2024-07-12 14:28',
-    status: 'completed',
-  },
-  {
-    id: '3',
-    user: 'Casey Chen',
-    type: 'buy',
-    asset: 'ETH',
-    amount: '$5,200',
-    price: '$2,341.00',
-    date: '2024-07-12 14:15',
-    status: 'completed',
-  },
-  {
-    id: '4',
-    user: 'Riley Martinez',
-    type: 'sell',
-    asset: 'BTC',
-    amount: '$8,900',
-    price: '$64,500.00',
-    date: '2024-07-12 13:52',
-    status: 'pending',
-  },
-  {
-    id: '5',
-    user: 'Morgan Lee',
-    type: 'buy',
-    asset: 'SPX',
-    amount: '$3,400',
-    price: '$5,124.75',
-    date: '2024-07-12 13:30',
-    status: 'failed',
-  },
-  {
-    id: '6',
-    user: 'Taylor Wilson',
-    type: 'sell',
-    asset: 'NASDAQ',
-    amount: '$2,100',
-    price: '$18,245.50',
-    date: '2024-07-12 13:15',
-    status: 'completed',
-  },
-]
-
-const getStatusColor = (status: Trade['status']) => {
-  switch (status) {
-    case 'completed':
-      return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
-    case 'pending':
-      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100'
-    case 'failed':
-      return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
-    default:
-      return 'bg-gray-100 text-gray-800'
-  }
+function money(value: string) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value
 }
 
 export function TradingTable() {
-  const [trades] = useState<Trade[]>(mockTrades)
+  const [rows, setRows] = useState<AdminTradeRow[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [draft, setDraft] = useState('')
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const totalVolume = trades
-    .filter(t => t.status === 'completed')
-    .reduce((sum, t) => sum + parseFloat(t.amount.replace(/[$,]/g, '')), 0)
+  // Searching the whole table server-side, debounced so typing isn't a request
+  // per keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setQuery(draft.trim())
+      setPage(1)
+    }, DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [draft])
 
-  const completedTrades = trades.filter(t => t.status === 'completed').length
-  const pendingTrades = trades.filter(t => t.status === 'pending').length
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await adminApi.getTrades({ q: query || undefined, page })
+      setRows(res.items)
+      setTotal(res.total)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load trades.')
+    } finally {
+      setLoading(false)
+    }
+  }, [query, page])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const pageCount = Math.max(1, Math.ceil(total / 20))
+  const from = total === 0 ? 0 : (page - 1) * 20 + 1
+  const to = Math.min(page * 20, total)
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="rounded-lg bg-gradient-to-br from-green-50 to-green-100 p-4 dark:from-green-950 dark:to-green-900">
-          <p className="text-sm font-medium text-green-900 dark:text-green-100">Total Volume (24h)</p>
-          <p className="text-2xl font-bold text-green-600 dark:text-green-400">${totalVolume.toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Search by trader or creator"
+            className="w-full rounded-lg border bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
         </div>
-        <div className="rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 p-4 dark:from-blue-950 dark:to-blue-900">
-          <p className="text-sm font-medium text-blue-900 dark:text-blue-100">Completed Trades</p>
-          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{completedTrades}</p>
-        </div>
-        <div className="rounded-lg bg-gradient-to-br from-yellow-50 to-yellow-100 p-4 dark:from-yellow-950 dark:to-yellow-900">
-          <p className="text-sm font-medium text-yellow-900 dark:text-yellow-100">Pending Trades</p>
-          <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{pendingTrades}</p>
-        </div>
+        <span className="text-sm text-muted-foreground">
+          {loading ? '—' : total === 0 ? 'No trades' : `Showing ${from}–${to} of ${total}`}
+        </span>
       </div>
+
+      {error && (
+        <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="px-6 py-3 text-left font-semibold">User</th>
-              <th className="px-6 py-3 text-center font-semibold">Type</th>
-              <th className="px-6 py-3 text-left font-semibold">Asset</th>
-              <th className="px-6 py-3 text-right font-semibold">Amount</th>
+              <th className="px-6 py-3 text-left font-semibold">Trader</th>
+              <th className="px-6 py-3 text-left font-semibold">Signal</th>
+              <th className="px-6 py-3 text-center font-semibold">Side</th>
+              <th className="px-6 py-3 text-right font-semibold">Quantity</th>
               <th className="px-6 py-3 text-right font-semibold">Price</th>
-              <th className="px-6 py-3 text-left font-semibold">Time</th>
-              <th className="px-6 py-3 text-left font-semibold">Status</th>
-              <th className="px-6 py-3 text-center font-semibold">Actions</th>
+              <th className="px-6 py-3 text-right font-semibold">Total</th>
+              <th className="px-6 py-3 text-left font-semibold">When</th>
             </tr>
           </thead>
           <tbody>
-            {trades.map((trade) => (
-              <tr key={trade.id} className="border-b transition-colors hover:bg-muted/50">
-                <td className="px-6 py-4 font-medium">{trade.user}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center justify-center">
-                    {trade.type === 'buy' ? (
-                      <div className="flex items-center gap-1 text-green-600">
-                        <ArrowUpRight className="size-4" />
-                        <span className="text-xs font-semibold">BUY</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 text-red-600">
-                        <ArrowDownLeft className="size-4" />
-                        <span className="text-xs font-semibold">SELL</span>
-                      </div>
-                    )}
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
-                    {trade.asset}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-right font-semibold">{trade.amount}</td>
-                <td className="px-6 py-4 text-right text-muted-foreground">{trade.price}</td>
-                <td className="px-6 py-4 text-muted-foreground text-xs">{trade.date}</td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusColor(trade.status)}`}>
-                    {trade.status.charAt(0).toUpperCase() + trade.status.slice(1)}
-                  </span>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center justify-center gap-2">
-                    <Button variant="outline" size="sm" className="h-8 w-8 p-0">
-                      <Eye className="size-4" />
-                    </Button>
-                  </div>
+            {loading ? (
+              Array.from({ length: 8 }).map((_, i) => (
+                <tr key={i} className="border-b">
+                  {Array.from({ length: 7 }).map((__, j) => (
+                    <td key={j} className="px-6 py-4">
+                      <Skeleton className="h-4 w-full" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-6 py-10 text-center text-muted-foreground">
+                  {query ? 'No trades match that search.' : 'No trades yet.'}
                 </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((trade) => (
+                <tr key={trade.id} className="border-b transition-colors hover:bg-muted/50">
+                  <td className="px-6 py-4 font-medium">@{trade.user.username}</td>
+                  <td className="px-6 py-4 text-muted-foreground">{trade.signalName}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center justify-center">
+                      <Badge variant={trade.side === 'BUY' ? 'default' : 'secondary'}>
+                        {trade.side === 'BUY' ? (
+                          <ArrowUpRight className="size-3" />
+                        ) : (
+                          <ArrowDownRight className="size-3" />
+                        )}
+                        {trade.side}
+                      </Badge>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right tabular-nums">{money(trade.quantity)}</td>
+                  <td className="px-6 py-4 text-right tabular-nums">{money(trade.pricePerUnit)}</td>
+                  <td className="px-6 py-4 text-right font-semibold tabular-nums">
+                    {money(trade.totalPoints)}
+                  </td>
+                  <td className="px-6 py-4 text-muted-foreground">
+                    {new Date(trade.createdAt).toLocaleString()}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <div>Showing {trades.length} recent trades</div>
-      </div>
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {pageCount}
+          </span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>
+              Previous
+            </Button>
+            <Button size="sm" variant="outline" disabled={page >= pageCount} onClick={() => setPage((n) => n + 1)}>
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

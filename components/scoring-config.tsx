@@ -1,218 +1,183 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { useEffect, useState } from 'react'
+import { Loader2, RotateCcw, Save } from 'lucide-react'
+import { adminApi, type ScoringConfig as Config } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Slider } from '@/components/ui/slider'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 
-interface ScoringWeights {
-  accuracy: number
-  consistency: number
-  profitability: number
-  followerBase: number
-  engagementRate: number
-}
+type Draft = Omit<Config, 'updatedAt'>
 
-interface PricingParameters {
-  baseFee: number
-  volumeFee: number
-  performanceFee: number
-  minPrice: number
-  maxPrice: number
-}
+const WEIGHTS: { key: keyof Draft; label: string; hint: string; max: number; step: number }[] = [
+  { key: 'wFollowers', label: 'Followers', hint: 'Points per follower', max: 1, step: 0.001 },
+  { key: 'wLikes', label: 'Likes', hint: 'Points per like', max: 1, step: 0.001 },
+  { key: 'wComments', label: 'Comments', hint: 'Points per comment', max: 1, step: 0.001 },
+  { key: 'wShares', label: 'Shares', hint: 'Points per share', max: 1, step: 0.001 },
+  { key: 'wGrowth', label: 'Growth', hint: 'Multiplier on growth rate', max: 10, step: 0.05 },
+]
+
+const PRICING: { key: keyof Draft; label: string; hint: string; max: number; step: number }[] = [
+  { key: 'priceBase', label: 'Base price', hint: 'Floor price for any signal', max: 100, step: 0.1 },
+  { key: 'priceK', label: 'Price coefficient', hint: 'How steeply score moves price', max: 10, step: 0.01 },
+  {
+    key: 'smoothing',
+    label: 'Smoothing (alpha)',
+    hint: '1 = jump straight to the new price, 0 = never move',
+    max: 1,
+    step: 0.05,
+  },
+]
 
 export function ScoringConfig() {
-  const [weights, setWeights] = useState<ScoringWeights>({
-    accuracy: 40,
-    consistency: 25,
-    profitability: 20,
-    followerBase: 10,
-    engagementRate: 5,
-  })
+  const [saved, setSaved] = useState<Config | null>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
 
-  const [pricing, setPricing] = useState<PricingParameters>({
-    baseFee: 10,
-    volumeFee: 2.5,
-    performanceFee: 15,
-    minPrice: 50,
-    maxPrice: 500,
-  })
+  useEffect(() => {
+    adminApi
+      .getScoring()
+      .then((config) => {
+        setSaved(config)
+        const { updatedAt, ...rest } = config
+        setDraft(rest)
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load the config.'))
+      .finally(() => setLoading(false))
+  }, [])
 
-  const [hasChanges, setHasChanges] = useState(false)
+  const dirty =
+    saved !== null &&
+    draft !== null &&
+    (Object.keys(draft) as (keyof Draft)[]).some((k) => draft[k] !== saved[k])
 
-  const handleWeightChange = (key: keyof ScoringWeights, value: number) => {
-    setWeights((prev) => ({ ...prev, [key]: value }))
-    setHasChanges(true)
+  const save = async () => {
+    if (!draft) return
+    setSaving(true)
+    setError(null)
+    setOk(null)
+    try {
+      const next = await adminApi.updateScoring(draft)
+      setSaved(next)
+      const { updatedAt, ...rest } = next
+      setDraft(rest)
+      setOk('Saved. New scores use these values from the next scoring run.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the config.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const handlePricingChange = (key: keyof PricingParameters, value: number) => {
-    setPricing((prev) => ({ ...prev, [key]: value }))
-    setHasChanges(true)
+  const reset = () => {
+    if (!saved) return
+    const { updatedAt, ...rest } = saved
+    setDraft(rest)
+    setOk(null)
+    setError(null)
   }
 
-  const totalWeights = Object.values(weights).reduce((a, b) => a + b, 0)
-  const isWeightValid = totalWeights === 100
-
-  const calculateSampleScore = () => {
-    return Math.round((Math.random() * 100) / 10) * 10 + 50
-  }
-
-  const calculateSamplePrice = () => {
-    const baseScore = calculateSampleScore()
-    return Math.round((baseScore / 100) * (pricing.maxPrice - pricing.minPrice) + pricing.minPrice)
-  }
-
-  return (
-    <div className="space-y-6">
-      <Tabs defaultValue="weights" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="weights">Scoring Weights</TabsTrigger>
-          <TabsTrigger value="pricing">Pricing Parameters</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="weights">
-          <Card>
-            <CardHeader>
-              <CardTitle>Signal Scoring Weights</CardTitle>
-              <CardDescription>
-                Adjust how different factors contribute to signal score calculation
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-8">
-              {Object.entries(weights).map(([key, value]) => (
-                <div key={key} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}</label>
-                    <Badge variant="secondary">{value}%</Badge>
-                  </div>
-                  <Slider
-                    value={[value]}
-                    onValueChange={(val) =>
-                      handleWeightChange(key as keyof ScoringWeights, Array.isArray(val) ? val[0] : val)
-                    }
-                    min={0}
-                    max={100}
-                    step={5}
-                  />
+  if (loading) {
+    return (
+      <div className="grid gap-6 lg:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} className="rounded-xl border p-6">
+            <Skeleton className="h-4 w-40" />
+            <div className="mt-6 space-y-5">
+              {Array.from({ length: 4 }).map((__, j) => (
+                <div key={j} className="space-y-2">
+                  <Skeleton className="h-3.5 w-28" />
+                  <Skeleton className="h-9 w-full" />
                 </div>
               ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
-              <div className="p-4 rounded-lg bg-muted/50">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Total Weight</span>
-                  <Badge variant={isWeightValid ? 'secondary' : 'destructive'}>
-                    {totalWeights}%
-                  </Badge>
-                </div>
-                {!isWeightValid && (
-                  <p className="text-xs text-red-600 mt-2">Total must equal 100%</p>
-                )}
-              </div>
+  if (!draft) {
+    return <p className="text-sm text-destructive">{error ?? 'Could not load the config.'}</p>
+  }
 
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm">Preview</h3>
-                <div className="p-4 border rounded-lg">
-                  <p className="text-xs text-muted-foreground mb-2">Sample signal scoring:</p>
-                  <Badge className="text-lg px-4 py-2">{calculateSampleScore()} / 100</Badge>
-                </div>
-              </div>
+  const field = (f: (typeof WEIGHTS)[number]) => (
+    <div key={f.key}>
+      <div className="flex items-center justify-between">
+        <label htmlFor={f.key} className="text-sm font-medium">
+          {f.label}
+        </label>
+        <input
+          id={f.key}
+          type="number"
+          min={0}
+          max={f.max}
+          step={f.step}
+          value={draft[f.key]}
+          onChange={(e) =>
+            setDraft({ ...draft, [f.key]: Number(e.target.value) })
+          }
+          className="w-24 rounded-md border bg-background px-2 py-1 text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={f.max}
+        step={f.step}
+        value={draft[f.key]}
+        onChange={(e) => setDraft({ ...draft, [f.key]: Number(e.target.value) })}
+        className="mt-2 w-full"
+      />
+      <p className="mt-1 text-xs text-muted-foreground">{f.hint}</p>
+    </div>
+  )
 
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1">Cancel</Button>
-                <Button disabled={!isWeightValid || !hasChanges}>Save Changes</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+  return (
+    <div className="space-y-4">
+      {error && (
+        <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>
+      )}
+      {ok && (
+        <p className="rounded-lg bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600 dark:text-emerald-400">
+          {ok}
+        </p>
+      )}
 
-        <TabsContent value="pricing">
-          <Card>
-            <CardHeader>
-              <CardTitle>Pricing Parameters</CardTitle>
-              <CardDescription>
-                Configure pricing calculation and fee structure
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-8">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Base Fee (%)</label>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    value={pricing.baseFee}
-                    onChange={(e) => handlePricingChange('baseFee', parseFloat(e.target.value) || 0)}
-                    step="0.5"
-                  />
-                </div>
-              </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Score weights</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">{WEIGHTS.map(field)}</CardContent>
+        </Card>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Volume Fee (%)</label>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    value={pricing.volumeFee}
-                    onChange={(e) => handlePricingChange('volumeFee', parseFloat(e.target.value) || 0)}
-                    step="0.5"
-                  />
-                </div>
-              </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Pricing</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">{PRICING.map(field)}</CardContent>
+        </Card>
+      </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Performance Fee (%)</label>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    value={pricing.performanceFee}
-                    onChange={(e) => handlePricingChange('performanceFee', parseFloat(e.target.value) || 0)}
-                    step="0.5"
-                  />
-                </div>
-              </div>
-
-              <div className="border-t pt-6 space-y-4">
-                <h3 className="font-medium text-sm">Price Range</h3>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Minimum Price ($)</label>
-                  <Input
-                    type="number"
-                    value={pricing.minPrice}
-                    onChange={(e) => handlePricingChange('minPrice', parseFloat(e.target.value) || 0)}
-                    step="10"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Maximum Price ($)</label>
-                  <Input
-                    type="number"
-                    value={pricing.maxPrice}
-                    onChange={(e) => handlePricingChange('maxPrice', parseFloat(e.target.value) || 0)}
-                    step="10"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm">Price Preview</h3>
-                <div className="p-4 border rounded-lg space-y-2">
-                  <p className="text-xs text-muted-foreground">Sample signal at score 65:</p>
-                  <Badge className="text-lg px-4 py-2">${calculateSamplePrice()}</Badge>
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1">Cancel</Button>
-                <Button disabled={!hasChanges}>Save Changes</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      <div className="flex items-center gap-3">
+        <Button onClick={save} disabled={!dirty || saving}>
+          {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+          Save changes
+        </Button>
+        <Button variant="outline" onClick={reset} disabled={!dirty || saving}>
+          <RotateCcw className="size-4" />
+          Discard
+        </Button>
+        {saved && (
+          <span className="ml-auto text-xs text-muted-foreground">
+            Last updated {new Date(saved.updatedAt).toLocaleString()}
+          </span>
+        )}
+      </div>
     </div>
   )
 }

@@ -1,179 +1,204 @@
 'use client'
 
-import { useState } from 'react'
-import { Check, X, Eye, Calendar } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Check, X, Ban, Loader2, RotateCcw } from 'lucide-react'
+import { adminApi, type AdminRealmRow, type RealmStatus } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
-interface CreatorApplication {
-  id: string
-  name: string
-  email: string
-  appliedDate: string
-  status: 'pending' | 'approved' | 'rejected'
-  specialty: string
-  followers: number
-  portfolio: string
-}
-
-const mockApplications: CreatorApplication[] = [
-  {
-    id: '1',
-    name: 'Alex Johnson',
-    email: 'alex@creators.com',
-    appliedDate: '2024-07-10',
-    status: 'pending',
-    specialty: 'Tech Analysis',
-    followers: 5200,
-    portfolio: 'View Profile',
-  },
-  {
-    id: '2',
-    name: 'Jordan Smith',
-    email: 'jordan@creators.com',
-    appliedDate: '2024-07-09',
-    status: 'pending',
-    specialty: 'Market Trends',
-    followers: 8400,
-    portfolio: 'View Profile',
-  },
-  {
-    id: '3',
-    name: 'Casey Chen',
-    email: 'casey@creators.com',
-    appliedDate: '2024-07-08',
-    status: 'approved',
-    specialty: 'AI Signals',
-    followers: 12300,
-    portfolio: 'View Profile',
-  },
-  {
-    id: '4',
-    name: 'Morgan Lee',
-    email: 'morgan@creators.com',
-    appliedDate: '2024-07-07',
-    status: 'rejected',
-    specialty: 'Crypto Trading',
-    followers: 2100,
-    portfolio: 'View Profile',
-  },
-  {
-    id: '5',
-    name: 'Taylor Wilson',
-    email: 'taylor@creators.com',
-    appliedDate: '2024-07-06',
-    status: 'pending',
-    specialty: 'Finance Education',
-    followers: 6800,
-    portfolio: 'View Profile',
-  },
+const FILTERS: { label: string; value: RealmStatus | 'ALL' }[] = [
+  { label: 'Pending', value: 'PENDING' },
+  { label: 'Approved', value: 'APPROVED' },
+  { label: 'Rejected', value: 'REJECTED' },
+  { label: 'Suspended', value: 'SUSPENDED' },
+  { label: 'All', value: 'ALL' },
 ]
 
-const getStatusBadge = (status: CreatorApplication['status']) => {
-  switch (status) {
-    case 'pending':
-      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100'
-    case 'approved':
-      return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
-    case 'rejected':
-      return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
-    default:
-      return 'bg-gray-100 text-gray-800'
-  }
+function initials(name: string) {
+  return name.split(/\s+/).slice(0, 2).map((p) => p[0] ?? '').join('').toUpperCase()
+}
+
+function statusVariant(status: RealmStatus) {
+  if (status === 'APPROVED') return 'default'
+  if (status === 'PENDING') return 'secondary'
+  return 'destructive'
 }
 
 export function CreatorApprovalsTable() {
-  const [applications, setApplications] = useState<CreatorApplication[]>(mockApplications)
+  const [filter, setFilter] = useState<RealmStatus | 'ALL'>('PENDING')
+  const [rows, setRows] = useState<AdminRealmRow[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
 
-  const handleApprove = (id: string) => {
-    setApplications(applications.map(app => 
-      app.id === id ? { ...app, status: 'approved' as const } : app
-    ))
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await adminApi.getRealms({
+        status: filter === 'ALL' ? undefined : filter,
+        page,
+      })
+      setRows(res.items)
+      setTotal(res.total)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load creator pages.')
+    } finally {
+      setLoading(false)
+    }
+  }, [filter, page])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const act = async (id: string, status: RealmStatus) => {
+    setPending(id)
+    try {
+      await adminApi.setRealmStatus(id, { status })
+      // Refetched rather than patched locally: approving also changes the owner's
+      // role and creatorStatus, so the row is more than its own status.
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update that page.')
+    } finally {
+      setPending(null)
+    }
   }
 
-  const handleReject = (id: string) => {
-    setApplications(applications.map(app => 
-      app.id === id ? { ...app, status: 'rejected' as const } : app
-    ))
-  }
-
-  const pendingCount = applications.filter(a => a.status === 'pending').length
+  const pageCount = Math.max(1, Math.ceil(total / 20))
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between rounded-lg bg-blue-50 p-4 dark:bg-blue-950">
-        <div>
-          <p className="text-sm font-medium text-blue-900 dark:text-blue-100">Pending Applications</p>
-          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{pendingCount}</p>
-        </div>
-        <Calendar className="size-8 text-blue-400" />
+      <div className="flex flex-wrap items-center gap-2">
+        {FILTERS.map((f) => (
+          <Button
+            key={f.value}
+            size="sm"
+            variant={filter === f.value ? 'default' : 'outline'}
+            onClick={() => {
+              setFilter(f.value)
+              setPage(1)
+            }}
+          >
+            {f.label}
+          </Button>
+        ))}
+        <span className="ml-auto text-sm text-muted-foreground">
+          {loading ? '—' : `${total} page${total === 1 ? '' : 's'}`}
+        </span>
       </div>
+
+      {error && (
+        <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="px-6 py-3 text-left font-semibold">Name</th>
-              <th className="px-6 py-3 text-left font-semibold">Email</th>
-              <th className="px-6 py-3 text-left font-semibold">Specialty</th>
+              <th className="px-6 py-3 text-left font-semibold">Creator page</th>
+              <th className="px-6 py-3 text-left font-semibold">Owner</th>
+              <th className="px-6 py-3 text-left font-semibold">Category</th>
+              <th className="px-6 py-3 text-center font-semibold">Posts</th>
               <th className="px-6 py-3 text-center font-semibold">Followers</th>
-              <th className="px-6 py-3 text-left font-semibold">Applied</th>
               <th className="px-6 py-3 text-left font-semibold">Status</th>
-              <th className="px-6 py-3 text-center font-semibold">Actions</th>
+              <th className="px-6 py-3 text-right font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {applications.map((app) => (
-              <tr key={app.id} className="border-b transition-colors hover:bg-muted/50">
-                <td className="px-6 py-4 font-medium">{app.name}</td>
-                <td className="px-6 py-4 text-muted-foreground">{app.email}</td>
-                <td className="px-6 py-4">{app.specialty}</td>
-                <td className="px-6 py-4 text-center">{app.followers.toLocaleString()}</td>
-                <td className="px-6 py-4 text-muted-foreground">{new Date(app.appliedDate).toLocaleDateString()}</td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusBadge(app.status)}`}>
-                    {app.status.charAt(0).toUpperCase() + app.status.slice(1)}
-                  </span>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center justify-center gap-2">
-                    {app.status === 'pending' && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-green-600 hover:bg-green-50"
-                          onClick={() => handleApprove(app.id)}
-                        >
-                          <Check className="size-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
-                          onClick={() => handleReject(app.id)}
-                        >
-                          <X className="size-4" />
-                        </Button>
-                      </>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 p-0"
-                    >
-                      <Eye className="size-4" />
-                    </Button>
-                  </div>
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i} className="border-b">
+                  {Array.from({ length: 7 }).map((__, j) => (
+                    <td key={j} className="px-6 py-4">
+                      <Skeleton className="h-4 w-full" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-6 py-10 text-center text-muted-foreground">
+                  No creator pages with this status.
                 </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((realm) => (
+                <tr key={realm.id} className="border-b transition-colors hover:bg-muted/50">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="size-9">
+                        {realm.iconUrl && <AvatarImage src={realm.iconUrl} alt="" />}
+                        <AvatarFallback>{initials(realm.name)}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{realm.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">/{realm.slug}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-muted-foreground">@{realm.owner.username}</td>
+                  <td className="px-6 py-4 text-muted-foreground">{realm.category}</td>
+                  <td className="px-6 py-4 text-center">{realm.postsCount}</td>
+                  <td className="px-6 py-4 text-center">{realm.followersCount}</td>
+                  <td className="px-6 py-4">
+                    <Badge variant={statusVariant(realm.status)}>{realm.status}</Badge>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center justify-end gap-2">
+                      {pending === realm.id ? (
+                        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                      ) : realm.status === 'APPROVED' ? (
+                        <Button size="sm" variant="outline" onClick={() => act(realm.id, 'SUSPENDED')}>
+                          <Ban className="size-3.5" />
+                          Suspend
+                        </Button>
+                      ) : realm.status === 'PENDING' ? (
+                        <>
+                          <Button size="sm" onClick={() => act(realm.id, 'APPROVED')}>
+                            <Check className="size-3.5" />
+                            Approve
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => act(realm.id, 'REJECTED')}>
+                            <X className="size-3.5" />
+                            Reject
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => act(realm.id, 'APPROVED')}>
+                          <RotateCcw className="size-3.5" />
+                          Reinstate
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
-      <div className="text-sm text-muted-foreground">
-        Showing {applications.length} applications
-      </div>
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {pageCount}
+          </span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>
+              Previous
+            </Button>
+            <Button size="sm" variant="outline" disabled={page >= pageCount} onClick={() => setPage((n) => n + 1)}>
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
