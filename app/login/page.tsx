@@ -17,6 +17,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 export default function LoginPage() {
   const router = useRouter();
   const login = useAdminAuth((s) => s.login);
+  // Explains an unprompted bounce back here: without it, being returned to the
+  // login screen an hour into a session reads as the dashboard breaking.
+  const sessionExpired = useAdminAuth((s) => s.sessionExpired);
+  const clearSessionExpired = useAdminAuth((s) => s.clearSessionExpired);
   const [error, setError] = useState<string | null>(null);
 
   const form = useForm<LoginInput>({
@@ -26,6 +30,7 @@ export default function LoginPage() {
 
   const onSubmit = async (data: LoginInput) => {
     setError(null);
+    clearSessionExpired();
     try {
       const res = await authApi.login(data);
       if (res.user.role !== 'ADMIN') {
@@ -40,6 +45,7 @@ export default function LoginPage() {
           role: res.user.role,
         },
         res.accessToken,
+        res.refreshToken,
       );
       router.push('/admin/overview');
     } catch (err) {
@@ -72,6 +78,13 @@ export default function LoginPage() {
             {error && (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {!error && sessionExpired && (
+              <Alert>
+                <AlertDescription>
+                  Your session expired. Please sign in again.
+                </AlertDescription>
               </Alert>
             )}
             <div className="space-y-1.5">

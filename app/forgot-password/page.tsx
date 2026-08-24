@@ -92,6 +92,7 @@ function ForgotPasswordForm() {
           role: res.user.role,
         },
         res.accessToken,
+        res.refreshToken,
       );
       router.push('/admin/overview');
     } catch (err) {

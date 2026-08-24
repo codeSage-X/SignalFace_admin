@@ -16,26 +16,130 @@ function authHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
-    ...options,
-  });
-
-  const data = await res.json();
+async function handleResponse<T>(res: Response): Promise<T> {
+  // Reading the text first, rather than `res.json()`, keeps a body-less reply
+  // (some DELETEs, and a proxy's bare 502) from surfacing as a parse error that
+  // hides the real status.
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
 
   if (!res.ok) {
-    const message = Array.isArray(data.message)
+    const message = Array.isArray(data?.message)
       ? data.message[0]
-      : (data.message ?? 'Something went wrong. Please try again.');
-    throw new ApiError(message, data.code);
+      : (data?.message ?? 'Something went wrong. Please try again.');
+    throw new ApiError(message, data?.code);
   }
 
   return data as T;
 }
 
+/**
+ * The three ways a renewal attempt can end. Keeping them apart is the whole
+ * point: collapsing them into "did it work?" means a five-second network blip
+ * is indistinguishable from a dead session, and the admin gets thrown out to
+ * the login screen for what was really a hiccup.
+ */
+export type RenewalResult =
+  /** New tokens are in the store. */
+  | 'renewed'
+  /** The API refused the refresh token. The session is genuinely over. */
+  | 'expired'
+  /** Couldn't ask — offline, API down, API restarting. Session left intact. */
+  | 'unavailable';
+
+/**
+ * Shared by every concurrent caller so a dashboard page with several requests in
+ * flight triggers one renewal, not one per request — rotation is single-use, so
+ * racing refreshes would burn each other's token and end the session.
+ */
+let renewal: Promise<RenewalResult> | null = null;
+
+export function renewSession(): Promise<RenewalResult> {
+  renewal ??= (async (): Promise<RenewalResult> => {
+    try {
+      const token = useAdminAuth.getState().refreshToken;
+      // Nothing to renew from. Sessions stored before the dashboard kept a
+      // refresh token land here, and they can only be resolved by signing in.
+      if (!token) return 'expired';
+
+      const res = await fetch(`${BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: token }),
+      });
+
+      // Only the API actually rejecting the credential ends the session. A 500
+      // or a 502 from a restarting server says nothing about whether the token
+      // is still good, so it must not be read as "signed out".
+      if (res.status === 401 || res.status === 403) return 'expired';
+      if (!res.ok) return 'unavailable';
+
+      const data = (await res.json()) as AdminAuthResponse;
+      useAdminAuth.getState().setTokens(data.accessToken, data.refreshToken);
+      return 'renewed';
+    } catch {
+      // fetch throws only when the request never completed — offline, DNS,
+      // connection refused. Not evidence the session ended.
+      return 'unavailable';
+    } finally {
+      renewal = null;
+    }
+  })();
+
+  return renewal;
+}
+
+/**
+ * Runs a request and, on a 401, renews the session once and replays it. The
+ * thunk rebuilds its headers per call so the replay carries the new token.
+ *
+ * Access tokens last an hour; without this the dashboard sat there looking
+ * signed in while every panel failed, and the only way out was clearing storage
+ * by hand.
+ */
+async function send<T>(path: string, sendOnce: () => Promise<Response>): Promise<T> {
+  const res = await sendOnce();
+
+  // A 401 from /auth/* is a credential error (wrong password, spent OTP), not
+  // an expired session — renewing would be meaningless.
+  if (res.status !== 401 || path.startsWith('/auth/')) return handleResponse<T>(res);
+
+  // Genuinely signed out — report the 401 as the plain "not signed in" it is.
+  if (!useAdminAuth.getState().isAuthenticated) return handleResponse<T>(res);
+
+  const outcome = await renewSession();
+
+  if (outcome === 'renewed') return handleResponse<T>(await sendOnce());
+
+  if (outcome === 'unavailable') {
+    // The session is probably fine and we simply couldn't check. Report it as
+    // the connectivity problem it is and keep the admin signed in, so the next
+    // click retries instead of dumping them at the login screen.
+    throw new ApiError(
+      'Could not reach the server to refresh your session. Check your connection and try again.',
+      'RENEWAL_UNAVAILABLE',
+    );
+  }
+
+  useAdminAuth.getState().logout({ expired: true });
+  throw new ApiError('Your session has expired. Please sign in again.', 'SESSION_EXPIRED');
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  return send<T>(path, () =>
+    fetch(`${BASE}${path}`, {
+      ...options,
+      // After `...options`, or an `options.headers` would replace the merged
+      // object wholesale and drop the Authorization header.
+      headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
+    }),
+  );
+}
+
 export interface AdminAuthResponse {
   accessToken: string;
+  /** Long-lived credential that renews `accessToken`; must be stored, not dropped. */
+  refreshToken: string;
   user: {
     id: string;
     email: string;
